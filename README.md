@@ -1,3 +1,6 @@
+Live site available at: https://evansvilleace.github.io/dnd-hex-map-maker/index.html
+
+Description
 A single-file, no-build-step browser tool for overlaying a hex grid on a map and exporting print-ready PNGs, built for tabletop RPG region/travel planning at multiple real-world scales (1, 6, 60, 360, and 3600 miles per hex).
 
 Open hex-map-exporter.html directly in a browser, or serve the folder with any static file server. No installation, no dependencies to manage, no server-side code.
