@@ -37,6 +37,9 @@
   .hex-toggle:hover { background: #f0ede8; }
   .hex-toggle input { margin: 0; cursor: pointer; }
   .swatch { width: 12px; height: 12px; border-radius: 2px; display: inline-block; flex-shrink: 0; }
+  .swatch-picker { width: 18px; height: 18px; border-radius: 4px; border: 1px solid #ccc; padding: 0; flex-shrink: 0; cursor: pointer; background: none; }
+  .custom-mile-input { width: 56px; padding: 4px 6px; border-radius: 4px; border: 1px solid #ccc; font-size: 13px; }
+  .hex-toggle.custom-toggle { gap: 8px; }
   input[type=number], input[type=range] { font-size: 13px; }
   .mile-input { width: 80px; padding: 6px 8px; border-radius: 6px; border: 1px solid #ccc; background: #fff; font-size: 13px; }
   .zoom-input { width: 100px; }
@@ -79,32 +82,9 @@
       <input type="number" class="mile-input" id="mapMiles" value="24901" min="1"> mi
     </label>
     <div class="divider"></div>
-    <label class="hex-toggle">
-      <input type="checkbox" id="chk1">
-      <span class="swatch" style="background:#e85d4a"></span>
-      1 mi
-    </label>
-    <label class="hex-toggle">
-      <input type="checkbox" id="chk6">
-      <span class="swatch" style="background:#e8a23a"></span>
-      6 mi
-    </label>
-    <label class="hex-toggle">
-      <input type="checkbox" id="chk60">
-      <span class="swatch" style="background:#4caf7d"></span>
-      60 mi
-    </label>
-    <label class="hex-toggle">
-      <input type="checkbox" id="chk360" checked>
-      <span class="swatch" style="background:#4a90d9"></span>
-      360 mi
-    </label>
-    <label class="hex-toggle">
-      <input type="checkbox" id="chk3600">
-      <span class="swatch" style="background:#9b59b6"></span>
-      3600 mi
-    </label>
+    <div id="hexScaleControls" class="controls" style="gap:8px;"></div>
     <div class="divider"></div>
+
     <label class="control-label">
       Zoom:
       <input type="range" class="zoom-input" id="zoomSlider" min="10" max="800" value="100" step="1">
@@ -135,10 +115,22 @@
 const HEX_SCALES = [
   { id: 1,    label: '1 mi',    color: '#e85d4a', alpha: 0.75, width: 1.0 },
   { id: 6,    label: '6 mi',    color: '#e8a23a', alpha: 0.75, width: 1.2 },
+  { id: 24,   label: '24 mi',   color: '#3aa0a8', alpha: 0.78, width: 1.3 },
   { id: 60,   label: '60 mi',   color: '#4caf7d', alpha: 0.80, width: 1.5 },
   { id: 360,  label: '360 mi',  color: '#4a90d9', alpha: 0.80, width: 2.0 },
   { id: 3600, label: '3600 mi', color: '#9b59b6', alpha: 0.80, width: 2.5 },
 ];
+
+// The "custom" scale is a sixth slot whose mile value (id) and label are
+// user-editable at runtime, unlike the five fixed presets above. It's kept
+// in the same HEX_SCALES array (rather than a separate system) so every
+// consumer that already iterates HEX_SCALES — rendering, Leaflet, export,
+// legend, nudge-step sizing — picks it up for free with no special-casing.
+// Its id starts at a value distinct from every preset; if the user later
+// types a mile value that collides with an active preset, the render loop
+// naturally draws two identical overlapping grids, which is harmless.
+const CUSTOM_SCALE = { id: 12, label: '12 mi', color: '#d45fa0', alpha: 0.78, width: 1.4, isCustom: true };
+HEX_SCALES.push(CUSTOM_SCALE);
 
 // The bundled world map ships as world-land.svg alongside this HTML file.
 // It's a plain equirectangular projection (lng -> x, lat -> y), built from
@@ -783,17 +775,93 @@ document.getElementById('mapMiles').addEventListener('change', function() {
   renderView();
 });
 
-HEX_SCALES.forEach(s => {
-  const chk = document.getElementById('chk' + s.id);
-  if (!chk) return;
-  chk.addEventListener('change', () => {
-    if (chk.checked) activeScales.add(s.id);
-    else activeScales.delete(s.id);
-    if (mapSource === 'osm') redrawLeafletHexes();
-    else renderView();
-    updateStatus();
+// Builds one toggle row per HEX_SCALES entry into #hexScaleControls: a
+// checkbox (drives activeScales, same Set-based mechanism every renderer
+// already reads from), a color <input type=color> (writes directly back
+// into scale.color, which every renderer reads live off the same object —
+// no separate "apply" step needed), and for the custom entry only, a
+// number input that overwrites scale.id (the mile value) and scale.label
+// in place. Mutating id in place — rather than removing/re-adding a new
+// scale object — is what lets activeScales, the nudge-step logic, and the
+// legend all keep working unmodified: they all key off whatever scale.id
+// currently is, read fresh each render, never cached.
+function buildHexScaleControls() {
+  const container = document.getElementById('hexScaleControls');
+  container.innerHTML = '';
+
+  HEX_SCALES.forEach(s => {
+    const row = document.createElement('label');
+    row.className = 'hex-toggle' + (s.isCustom ? ' custom-toggle' : '');
+
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.id = 'chk' + s.id;
+    chk.checked = activeScales.has(s.id);
+    row.appendChild(chk);
+
+    const picker = document.createElement('input');
+    picker.type = 'color';
+    picker.className = 'swatch-picker';
+    picker.value = s.color;
+    picker.title = 'Grid color for ' + s.label;
+    row.appendChild(picker);
+
+    if (s.isCustom) {
+      const mileInput = document.createElement('input');
+      mileInput.type = 'number';
+      mileInput.className = 'custom-mile-input';
+      mileInput.min = '0.1';
+      mileInput.step = 'any';
+      mileInput.value = s.id;
+      mileInput.title = 'Custom hex size, in miles';
+      row.appendChild(mileInput);
+      row.appendChild(document.createTextNode('mi (custom)'));
+
+      mileInput.addEventListener('change', () => {
+        const wasActive = activeScales.has(s.id);
+        const newMiles = parseFloat(mileInput.value);
+        if (!newMiles || newMiles <= 0) { mileInput.value = s.id; return; }
+        const oldId = s.id;
+        if (wasActive) activeScales.delete(oldId);
+        // Remove any stale Leaflet layer keyed under the old mile value —
+        // drawLeafletHex looks up/stores layers by scale.id, so once id
+        // changes below, the layer under oldId would otherwise never be
+        // referenced (and never removed) again.
+        if (leafletHexLayers[oldId]) {
+          if (leafletMap) leafletMap.removeLayer(leafletHexLayers[oldId]);
+          delete leafletHexLayers[oldId];
+        }
+        s.id = newMiles;
+        s.label = newMiles + ' mi';
+        chk.id = 'chk' + s.id;
+        if (wasActive) activeScales.add(s.id);
+        if (mapSource === 'osm') redrawLeafletHexes();
+        else renderView();
+        updateStatus();
+      });
+    } else {
+      const text = document.createTextNode(s.label);
+      row.appendChild(text);
+    }
+
+    chk.addEventListener('change', () => {
+      if (chk.checked) activeScales.add(s.id);
+      else activeScales.delete(s.id);
+      if (mapSource === 'osm') redrawLeafletHexes();
+      else renderView();
+      updateStatus();
+    });
+
+    picker.addEventListener('input', () => {
+      s.color = picker.value;
+      if (mapSource === 'osm') redrawLeafletHexes();
+      else renderView();
+    });
+
+    container.appendChild(row);
   });
-});
+}
+buildHexScaleControls();
 
 function updateStatus() {
   const active = HEX_SCALES.filter(s => activeScales.has(s.id)).map(s => s.label);
